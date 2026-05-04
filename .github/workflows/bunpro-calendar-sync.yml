@@ -1,0 +1,23 @@
+name: Bunpro Google Calendar Sync
+on:
+  # schedule:
+  #  - cron: "*/8 * * * *"
+  workflow_dispatch: # manual trigger from the Actions tab
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run calendar sync
+        env:
+          BUNPRO_EMAIL: ${{ secrets.BUNPRO_EMAIL }}
+          BUNPRO_PASSWORD: ${{ secrets.BUNPRO_PASSWORD }}
+          GCAL_CLIENT_ID: ${{ secrets.GCAL_CLIENT_ID }}
+          GCAL_CLIENT_SECRET: ${{ secrets.GCAL_CLIENT_SECRET }}
+          GCAL_REFRESH_TOKEN: ${{ secrets.GCAL_REFRESH_TOKEN }}
+          GCAL_CALENDAR_ID: ${{ secrets.GCAL_CALENDAR_ID }}
+        run: |
+          chmod +x bunpro_calendar_sync.sh
+          ./bunpro_calendar_sync.sh
