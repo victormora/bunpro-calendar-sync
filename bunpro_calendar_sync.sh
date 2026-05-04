@@ -123,68 +123,49 @@ fi
 echo "frontend_api_token obtained."
 
 # ─── 2. Fetch currently due reviews ──────────────────────────────────────────
+#
+# Response shape: {"total_due_grammar": N, "total_due_vocab": N}
 
 echo "Fetching due reviews..."
 
-DUE_HTTP_STATUS=$(curl -s -o /tmp/due_response.json -w "%{http_code}" \
+DUE_RESPONSE=$(curl -sf \
   -b "$COOKIE_JAR" \
   -H "Authorization: Token token=${FRONTEND_API_TOKEN}" \
   -H "Accept: application/json" \
-  "https://api.bunpro.jp/api/frontend/due")
-DUE_RESPONSE=$(cat /tmp/due_response.json)
-echo "DEBUG due — HTTP ${DUE_HTTP_STATUS} — body: ${DUE_RESPONSE}"
+  "https://api.bunpro.jp/api/frontend/user/due")
 
-# /due response shape is undocumented — try common key names.
-# Inspect the raw response in your first run and adjust the jq path if needed.
-DUE_COUNT=$(echo "$DUE_RESPONSE" | jq -r '
-  if type == "object" then
-    (.total // .count // .data.total // .data.count // 0)
-  elif type == "array" then
-    length
-  else 0 end
-' 2>/dev/null || echo "0")
-
-# Guard against non-numeric value before arithmetic comparisons
+DUE_COUNT=$(echo "$DUE_RESPONSE" | jq -r '(.total_due_grammar // 0) + (.total_due_vocab // 0)')
 DUE_COUNT=$(echo "$DUE_COUNT" | grep -E '^[0-9]+$' || echo "0")
 
 echo "Currently due: ${DUE_COUNT} reviews"
 
 # ─── 3. Fetch hourly forecast for next upcoming review time ──────────────────
+#
+# Response shape:
+#   { "grammar": {"2026-05-04T23:00Z": 8, ...}, "vocab": {"2026-05-04T23:00Z": 0, ...} }
+# We sum grammar + vocab per bucket, then pick the first future bucket with count > 0.
 
 echo "Fetching hourly forecast..."
 
-FORECAST_HTTP_STATUS=$(curl -s -o /tmp/forecast_response.json -w "%{http_code}" \
+FORECAST=$(curl -sf \
   -b "$COOKIE_JAR" \
   -H "Authorization: Token token=${FRONTEND_API_TOKEN}" \
   -H "Accept: application/json" \
-  "https://api.bunpro.jp/api/frontend/forecast_hourly")
-FORECAST=$(cat /tmp/forecast_response.json)
-echo "DEBUG forecast — HTTP ${FORECAST_HTTP_STATUS} — body: ${FORECAST}"
-
-# forecast_hourly response shape is undocumented.
-# The jq below tries two common shapes:
-#
-#   Shape A (array of objects):
-#     [{"hour":"2026-05-04T10:00:00Z","count":5}, ...]
-#
-#   Shape B (object with data array):
-#     {"data":[{"available_at":"2026-05-04T10:00:00Z","count":5}, ...]}
-#
-# Adjust the key names (.hour / .available_at / .count) if needed after
-# inspecting the raw response on your first run.
+  "https://api.bunpro.jp/api/frontend/user_stats/forecast_hourly")
 
 NOW_ISO=$(date -u "+%Y-%m-%dT%H:%M:%SZ")
 
-NEXT_REVIEW_AT=$(echo "$FORECAST" | jq -r --arg now "$NOW_ISO" '
-  (if type == "array" then . else .data // [] end)
-  | map(
-      { time: (.hour // .available_at // .time // ""),
-        count: (.count // .reviews_available // 0) }
-    )
-  | map(select(.count > 0 and .time > $now))
-  | sort_by(.time)
-  | first
-  | .time // empty
+# Keys look like "2026-05-04T23:00Z" (no seconds). We compare them as strings
+# against the current time truncated to the same format for correct ordering.
+NOW_HOUR=$(date -u "+%Y-%m-%dT%H:00Z")
+
+NEXT_REVIEW_AT=$(echo "$FORECAST" | jq -r --arg now "$NOW_HOUR" '
+  .grammar as $g | .vocab as $v |
+  ($g | keys) |
+  map(select(. > $now)) |
+  map(select( (($g[.] // 0) + ($v[.] // 0)) > 0 )) |
+  sort |
+  first // empty
 ')
 
 if [ -z "$NEXT_REVIEW_AT" ] && [ "$DUE_COUNT" -eq 0 ]; then
@@ -192,13 +173,17 @@ if [ -z "$NEXT_REVIEW_AT" ] && [ "$DUE_COUNT" -eq 0 ]; then
   exit 0
 fi
 
-# If forecast has nothing future but reviews are due now, use now as placeholder;
-# the sliding-window block below will override it to the correct snapped time.
+# If no future bucket found but reviews are due now, use a placeholder —
+# the sliding-window block below will snap it to the correct :00 or :30.
 if [ -z "$NEXT_REVIEW_AT" ]; then
   NEXT_REVIEW_AT="$NOW_ISO"
 fi
 
-echo "Raw next review time: ${NEXT_REVIEW_AT}"
+# Normalise to full ISO-8601 with seconds so date parsing works everywhere
+# Input "2026-05-04T23:00Z" → "2026-05-04T23:00:00Z"
+NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | sed 's/T\([0-9][0-9]\):\([0-9][0-9]\)Z$/T::00Z/')
+
+echo "Next review bucket: ${NEXT_REVIEW_AT}"
 
 # ─── 4. Sliding window — snap to nearest :00 or :30 if reviews are overdue ───
 
@@ -230,12 +215,10 @@ if [ "$DUE_COUNT" -gt 0 ]; then
   COUNT_FOR_TITLE="$DUE_COUNT"
   SUFFIX="ready"
 else
-  # Pull the count for the upcoming bucket from the forecast
-  COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$NEXT_REVIEW_AT" '
-    (if type == "array" then . else .data // [] end)
-    | map(select((.hour // .available_at // .time // "") == $t))
-    | first
-    | (.count // .reviews_available // 0)
+  # Sum grammar + vocab for the next bucket from the forecast
+  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/T\([0-9][0-9]\):\([0-9][0-9]\):00Z$/T:Z/')
+  COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$BUCKET_KEY" '
+    ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
   COUNT_FOR_TITLE=$(echo "$COUNT_FOR_TITLE" | grep -E '^[0-9]+$' || echo "0")
   SUFFIX="incoming"
