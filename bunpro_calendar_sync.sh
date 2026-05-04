@@ -243,7 +243,7 @@ ACCESS_TOKEN=$(curl -sf \
 # ─── 7. Upsert the Calendar event ────────────────────────────────────────────
 # Google Calendar event IDs: only lowercase a–v and 0–9 (base32hex). No w/x/y/z.
 
-FIXED_EVENT_ID="bunpr0nextreviewaut0"
+FIXED_EVENT_ID="bunpr0calendarauto1"
 
 CAL_ID_ENCODED=$(jq -rn --arg v "$GCAL_CALENDAR_ID" '$v | @uri')
 
