@@ -38,20 +38,44 @@ trap 'rm -f "$COOKIE_JAR"' EXIT
 
 # ─── 1. Login and obtain frontend_api_token ──────────────────────────────────
 #
-# Bunpro uses a session-based token (frontend_api_token) that is set as a
-# cookie after login. It is different from the API key shown in Settings.
-# We retrieve it by:
-#   a) POSTing credentials to the login endpoint
-#   b) GETting the settings page, which sets the token in Set-Cookie headers
+# Bunpro is a Rails app. Its login endpoint requires:
+#   a) A CSRF authenticity_token fetched from the login page first
+#   b) Form-encoded POST (not JSON) with that token included
+#
+# After login, we GET the settings page which sets the frontend_api_token cookie.
 
-echo "Logging in to Bunpro..."
+echo "Fetching Bunpro login page for CSRF token..."
+
+LOGIN_PAGE=$(curl -sf \
+  -c "$COOKIE_JAR" \
+  "https://bunpro.jp/users/sign_in")
+
+CSRF_TOKEN=$(echo "$LOGIN_PAGE" \
+  | grep -oP 'name="authenticity_token"[^>]*value="\K[^"]+' \
+  | head -1)
+
+if [ -z "$CSRF_TOKEN" ]; then
+  # Fallback: try meta tag format
+  CSRF_TOKEN=$(echo "$LOGIN_PAGE" \
+    | grep -oP '<meta name="csrf-token"[^>]*content="\K[^"]+' \
+    | head -1)
+fi
+
+if [ -z "$CSRF_TOKEN" ]; then
+  echo "Could not extract CSRF token from login page. Bunpro may have changed their HTML."
+  exit 1
+fi
+
+echo "CSRF token obtained. Logging in..."
 
 LOGIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+  -L \
+  -b "$COOKIE_JAR" \
   -c "$COOKIE_JAR" \
   -X POST \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d "{\"user\":{\"email\":\"${BUNPRO_EMAIL}\",\"password\":\"${BUNPRO_PASSWORD}\"}}" \
+  --data-urlencode "user[email]=${BUNPRO_EMAIL}" \
+  --data-urlencode "user[password]=${BUNPRO_PASSWORD}" \
+  --data-urlencode "authenticity_token=${CSRF_TOKEN}" \
   "https://bunpro.jp/users/sign_in")
 
 if [ "$LOGIN_STATUS" -lt 200 ] || [ "$LOGIN_STATUS" -ge 400 ]; then
@@ -61,7 +85,7 @@ fi
 
 echo "Session established (HTTP ${LOGIN_STATUS}). Fetching frontend_api_token..."
 
-# The frontend_api_token is issued as a cookie when hitting the settings page.
+# The frontend_api_token is set as a cookie when hitting the settings page.
 # We capture response headers (-D -) and discard the body (-o /dev/null).
 SETTINGS_HEADERS=$(curl -sf \
   -b "$COOKIE_JAR" \
