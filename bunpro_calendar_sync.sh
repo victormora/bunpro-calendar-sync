@@ -69,7 +69,6 @@ fi
 echo "CSRF token obtained. Logging in..."
 
 LOGIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -L \
   -b "$COOKIE_JAR" \
   -c "$COOKIE_JAR" \
   -X POST \
@@ -78,9 +77,15 @@ LOGIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   --data-urlencode "authenticity_token=${CSRF_TOKEN}" \
   "https://bunpro.jp/users/sign_in")
 
-if [ "$LOGIN_STATUS" -lt 200 ] || [ "$LOGIN_STATUS" -ge 400 ]; then
+# Rails login returns 302 on success (redirect to dashboard).
+# 200 would mean the login page was re-rendered — likely wrong credentials.
+if [ "$LOGIN_STATUS" != "302" ] && [ "$LOGIN_STATUS" != "200" ]; then
   echo "Login failed: HTTP ${LOGIN_STATUS}. Check your BUNPRO_EMAIL and BUNPRO_PASSWORD."
   exit 1
+fi
+
+if [ "$LOGIN_STATUS" = "200" ]; then
+  echo "Warning: login returned 200 — credentials may be wrong, but continuing."
 fi
 
 echo "Session established (HTTP ${LOGIN_STATUS}). Fetching frontend_api_token..."
