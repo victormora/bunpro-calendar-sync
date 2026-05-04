@@ -126,10 +126,13 @@ echo "frontend_api_token obtained."
 
 echo "Fetching due reviews..."
 
-DUE_RESPONSE=$(curl -sf \
+DUE_HTTP_STATUS=$(curl -s -o /tmp/due_response.json -w "%{http_code}" \
+  -b "$COOKIE_JAR" \
   -H "Authorization: Token token=${FRONTEND_API_TOKEN}" \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/due")
+DUE_RESPONSE=$(cat /tmp/due_response.json)
+echo "DEBUG due — HTTP ${DUE_HTTP_STATUS} — body: ${DUE_RESPONSE}"
 
 # /due response shape is undocumented — try common key names.
 # Inspect the raw response in your first run and adjust the jq path if needed.
@@ -139,7 +142,7 @@ DUE_COUNT=$(echo "$DUE_RESPONSE" | jq -r '
   elif type == "array" then
     length
   else 0 end
-')
+' 2>/dev/null || echo "0")
 
 # Guard against non-numeric value before arithmetic comparisons
 DUE_COUNT=$(echo "$DUE_COUNT" | grep -E '^[0-9]+$' || echo "0")
@@ -150,10 +153,13 @@ echo "Currently due: ${DUE_COUNT} reviews"
 
 echo "Fetching hourly forecast..."
 
-FORECAST=$(curl -sf \
+FORECAST_HTTP_STATUS=$(curl -s -o /tmp/forecast_response.json -w "%{http_code}" \
+  -b "$COOKIE_JAR" \
   -H "Authorization: Token token=${FRONTEND_API_TOKEN}" \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/forecast_hourly")
+FORECAST=$(cat /tmp/forecast_response.json)
+echo "DEBUG forecast — HTTP ${FORECAST_HTTP_STATUS} — body: ${FORECAST}"
 
 # forecast_hourly response shape is undocumented.
 # The jq below tries two common shapes:
