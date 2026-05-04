@@ -181,7 +181,7 @@ fi
 
 # Normalise to full ISO-8601 with seconds so date parsing works everywhere
 # Input "2026-05-04T23:00Z" → "2026-05-04T23:00:00Z"
-NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | sed 's/T\([0-9][0-9]\):\([0-9][0-9]\)Z$/T::00Z/')
+NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | sed 's/Z$/:00Z/')
 
 echo "Next review bucket: ${NEXT_REVIEW_AT}"
 
@@ -216,7 +216,7 @@ if [ "$DUE_COUNT" -gt 0 ]; then
   SUFFIX="ready"
 else
   # Sum grammar + vocab for the next bucket from the forecast
-  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/T\([0-9][0-9]\):\([0-9][0-9]\):00Z$/T:Z/')
+  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/:00Z$/Z/')
   COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$BUCKET_KEY" '
     ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
