@@ -221,7 +221,7 @@ else
     ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
   COUNT_FOR_TITLE=$(echo "$COUNT_FOR_TITLE" | grep -E '^[0-9]+$' || echo "0")
-  SUFFIX="incoming"
+  SUFFIX="ready"
 fi
 
 PLURAL=""
