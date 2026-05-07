@@ -153,6 +153,9 @@ FORECAST=$(curl -sf \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/user_stats/forecast_hourly")
 
+# Temporary debug
+echo "DEBUG forecast raw: $(echo "$FORECAST" | head -c 300)"
+
 # Keys look like "2026-05-04T23:00Z" (no seconds). We compare them as strings
 # against the current time truncated to the same format for correct ordering.
 NOW_HOUR=$(date -u "+%Y-%m-%dT%H:00Z")
