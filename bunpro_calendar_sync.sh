@@ -153,8 +153,6 @@ FORECAST=$(curl -sf \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/user_stats/forecast_hourly")
 
-NOW_ISO=$(date -u "+%Y-%m-%dT%H:%M:%SZ")
-
 # Keys look like "2026-05-04T23:00Z" (no seconds). We compare them as strings
 # against the current time truncated to the same format for correct ordering.
 NOW_HOUR=$(date -u "+%Y-%m-%dT%H:00Z")
@@ -176,12 +174,13 @@ fi
 # If no future bucket found but reviews are due now, use a placeholder —
 # the sliding-window block below will snap it to the correct :00 or :30.
 if [ -z "$NEXT_REVIEW_AT" ]; then
-  NEXT_REVIEW_AT="$NOW_ISO"
+  NEXT_REVIEW_AT="$NOW_HOUR"
 fi
 
-# Normalise to full ISO-8601 with seconds so date parsing works everywhere
-# Input "2026-05-04T23:00Z" → "2026-05-04T23:00:00Z"
-NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | sed 's/Z$/:00Z/')
+# Normalise to full ISO-8601 with seconds so date parsing works everywhere.
+# Works for both forecast keys ("T23:00Z") and the NOW_HOUR fallback ("T20:00Z").
+# Takes first 16 chars (YYYY-MM-DDTHH:MM) then appends :00Z.
+NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | cut -c1-16):00Z
 
 echo "Next review bucket: ${NEXT_REVIEW_AT}"
 
@@ -216,12 +215,12 @@ if [ "$DUE_COUNT" -gt 0 ]; then
   SUFFIX="ready"
 else
   # Sum grammar + vocab for the next bucket from the forecast
-  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/:00Z$/Z/')
+  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | cut -c1-16)Z
   COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$BUCKET_KEY" '
     ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
   COUNT_FOR_TITLE=$(echo "$COUNT_FOR_TITLE" | grep -E '^[0-9]+$' || echo "0")
-  SUFFIX="ready"
+  SUFFIX="incoming"
 fi
 
 PLURAL=""
