@@ -153,20 +153,32 @@ FORECAST=$(curl -sf \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/user_stats/forecast_hourly")
 
-# Temporary debug
-echo "DEBUG forecast raw: $(echo "$FORECAST" | head -c 300)"
+# Keys look like "2026-05-07T02:00Z" — Bunpro always uses today's date for all
+# 24 hours, even ones that have already wrapped past midnight into tomorrow.
+# We use jq's built-in `now` to compute the correct future epoch per hour key,
+# handling the day-boundary wraparound without any extra shell date arithmetic.
 
-# Keys look like "2026-05-04T23:00Z" (no seconds). We compare them as strings
-# against the current time truncated to the same format for correct ordering.
-NOW_HOUR=$(date -u "+%Y-%m-%dT%H:00Z")
-
-NEXT_REVIEW_AT=$(echo "$FORECAST" | jq -r --arg now "$NOW_HOUR" '
+NEXT_REVIEW_AT=$(echo "$FORECAST" | jq -r '
   .grammar as $g | .vocab as $v |
   ($g | keys) |
-  map(select(. > $now)) |
-  map(select( (($g[.] // 0) + ($v[.] // 0)) > 0 )) |
-  sort |
-  first // empty
+  map(
+    . as $k |
+    ($k[11:13] | tonumber) as $h |
+    ($h * 3600) as $key_sod |
+    ((now | floor) - ((now | floor) % 3600)) as $cur_hour_epoch |
+    (((now | floor) % 86400) - ((now | floor) % 3600)) as $cur_sod |
+    (if $key_sod > $cur_sod
+     then $cur_hour_epoch + ($key_sod - $cur_sod)
+     else $cur_hour_epoch + (86400 - $cur_sod + $key_sod)
+     end) as $future_epoch |
+    { future_epoch: $future_epoch,
+      count: (($g[$k] // 0) + ($v[$k] // 0)) }
+  ) |
+  map(select(.count > 0 and .future_epoch > (now | floor))) |
+  sort_by(.future_epoch) |
+  first |
+  .future_epoch |
+  strftime("%Y-%m-%dT%H:00:00Z")
 ')
 
 if [ -z "$NEXT_REVIEW_AT" ] && [ "$DUE_COUNT" -eq 0 ]; then
@@ -174,16 +186,11 @@ if [ -z "$NEXT_REVIEW_AT" ] && [ "$DUE_COUNT" -eq 0 ]; then
   exit 0
 fi
 
-# If no future bucket found but reviews are due now, use a placeholder —
+# If no future bucket found but reviews are due now, use current hour as placeholder —
 # the sliding-window block below will snap it to the correct :00 or :30.
 if [ -z "$NEXT_REVIEW_AT" ]; then
-  NEXT_REVIEW_AT="$NOW_HOUR"
+  NEXT_REVIEW_AT=$(date -u "+%Y-%m-%dT%H:00:00Z")
 fi
-
-# Normalise to full ISO-8601 with seconds so date parsing works everywhere.
-# Works for both forecast keys ("T23:00Z") and the NOW_HOUR fallback ("T20:00Z").
-# Takes first 16 chars (YYYY-MM-DDTHH:MM) then appends :00Z.
-NEXT_REVIEW_AT=$(echo "$NEXT_REVIEW_AT" | cut -c1-16):00Z
 
 echo "Next review bucket: ${NEXT_REVIEW_AT}"
 
@@ -218,7 +225,8 @@ if [ "$DUE_COUNT" -gt 0 ]; then
   SUFFIX="ready"
 else
   # Sum grammar + vocab for the next bucket from the forecast
-  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | cut -c1-16)Z
+  # Forecast keys are "YYYY-MM-DDTHH:00Z" (no seconds) — strip :00Z back to Z
+  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/:00Z$/Z/')
   COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$BUCKET_KEY" '
     ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
