@@ -142,8 +142,10 @@ echo "Currently due: ${DUE_COUNT} reviews"
 # ─── 3. Fetch hourly forecast for next upcoming review time ──────────────────
 #
 # Response shape:
-#   { "grammar": {"2026-05-04T23:00Z": 8, ...}, "vocab": {"2026-05-04T23:00Z": 0, ...} }
-# We sum grammar + vocab per bucket, then pick the first future bucket with count > 0.
+#   { "grammar": {"2026-05-07T23:00Z": 8, ...}, "vocab": {"2026-05-07T23:00Z": 0, ...} }
+# Bunpro always uses today's date for all 24 keys, even hours past midnight.
+# We use jq's built-in `now` to compute the correct future epoch per key,
+# handling the day-boundary wraparound without extra shell date arithmetic.
 
 echo "Fetching hourly forecast..."
 
@@ -152,11 +154,6 @@ FORECAST=$(curl -sf \
   -H "Authorization: Token token=${FRONTEND_API_TOKEN}" \
   -H "Accept: application/json" \
   "https://api.bunpro.jp/api/frontend/user_stats/forecast_hourly")
-
-# Keys look like "2026-05-07T02:00Z" — Bunpro always uses today's date for all
-# 24 hours, even ones that have already wrapped past midnight into tomorrow.
-# We use jq's built-in `now` to compute the correct future epoch per hour key,
-# handling the day-boundary wraparound without any extra shell date arithmetic.
 
 NEXT_REVIEW_AT=$(echo "$FORECAST" | jq -r '
   .grammar as $g | .vocab as $v |
@@ -224,9 +221,9 @@ if [ "$DUE_COUNT" -gt 0 ]; then
   COUNT_FOR_TITLE="$DUE_COUNT"
   SUFFIX="ready"
 else
-  # Sum grammar + vocab for the next bucket from the forecast
-  # Forecast keys are "YYYY-MM-DDTHH:00Z" (no seconds) — strip :00Z back to Z
-  BUCKET_KEY=$(echo "$NEXT_REVIEW_AT" | sed 's/:00Z$/Z/')
+  # Forecast keys always use today's date — extract just the hour from NEXT_REVIEW_AT
+  # and pair it with today's date, since Bunpro never increments the date in the response.
+  BUCKET_KEY="$(date -u '+%Y-%m-%d')T$(echo "$NEXT_REVIEW_AT" | cut -c12-13):00Z"
   COUNT_FOR_TITLE=$(echo "$FORECAST" | jq -r --arg t "$BUCKET_KEY" '
     ((.grammar[$t] // 0) + (.vocab[$t] // 0))
   ')
